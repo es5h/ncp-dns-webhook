@@ -82,6 +82,27 @@ func (c *ncpDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 }
 
 func (c *ncpDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
+	cfg, err := loadConfig(ch.Config)
+	if err != nil {
+		return err
+	}
+
+	accessToken, err := c.loadSecretData(cfg.AccessToken, ch.ResourceNamespace)
+	if err != nil {
+		return err
+	}
+	secretKey, err := c.loadSecretData(cfg.SecretToken, ch.ResourceNamespace)
+	if err != nil {
+		return err
+	}
+
+	client := ncpdns.NewNcpDnsClient(ncpdns.NcpDnsOptions{
+		BaseUrl:   cfg.BaseURL,
+		AccessKey: string(accessToken),
+		SecretKey: string(secretKey),
+	})
+	c.ncpDNSClient = client
+
 	domainID, err := c.ncpDNSClient.GetDomainId(ch.ResolvedZone)
 	if err != nil {
 		return fmt.Errorf("ncpdns: error getting domain ID: %v", err)
