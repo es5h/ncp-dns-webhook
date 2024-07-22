@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
+	"log"
 	"os"
 	"strings"
 
@@ -69,12 +70,18 @@ func (c *ncpDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 	})
 	c.ncpDNSClient = client
 
-	domainID, err := c.ncpDNSClient.GetDomainId(ch.ResolvedZone)
+	log.Printf("Attempting to get domain ID for zone: %s", ch.ResolvedZone)
+
+	// Remove trailing dot from resolved zone
+	cleanResolvedZone := strings.TrimSuffix(ch.ResolvedZone, ".")
+	domainID, err := c.ncpDNSClient.GetDomainId(cleanResolvedZone)
+
 	if err != nil {
 		return fmt.Errorf("ncpdns: error getting domain ID: %v", err)
 	}
 
-	err = c.ncpDNSClient.CreateTxtRecord(domainID, c.extractRecordName(ch.ResolvedFQDN, ch.ResolvedZone), ch.Key)
+	log.Printf("Domain ID for zone %s is %d", ch.ResolvedZone, domainID)
+	err = c.ncpDNSClient.CreateTxtRecord(domainID, c.extractRecordName(ch.ResolvedFQDN, cleanResolvedZone), ch.Key)
 	if err != nil {
 		return fmt.Errorf("ncpdns: error creating TXT record: %v", err)
 	}
@@ -103,12 +110,14 @@ func (c *ncpDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 	})
 	c.ncpDNSClient = client
 
-	domainID, err := c.ncpDNSClient.GetDomainId(ch.ResolvedZone)
+	// Remove trailing dot from resolved zone
+	cleanResolvedZone := strings.TrimSuffix(ch.ResolvedZone, ".")
+	domainID, err := c.ncpDNSClient.GetDomainId(cleanResolvedZone)
 	if err != nil {
 		return fmt.Errorf("ncpdns: error getting domain ID: %v", err)
 	}
 
-	recordID, err := c.ncpDNSClient.GetTxtRecordId(domainID, c.extractRecordName(ch.ResolvedFQDN, ch.ResolvedZone))
+	recordID, err := c.ncpDNSClient.GetTxtRecordId(domainID, c.extractRecordName(ch.ResolvedFQDN, cleanResolvedZone))
 	if err != nil {
 		return fmt.Errorf("ncpdns: error getting TXT record ID: %v", err)
 	}

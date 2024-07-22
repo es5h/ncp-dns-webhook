@@ -34,7 +34,10 @@ func NewNcpDnsClient(options NcpDnsOptions) *NcpDnsClient {
 }
 
 func (c *NcpDnsClient) GetDomainId(domainName string) (int, error) {
+
 	url := fmt.Sprintf("%s/dns/v1/ncpdns/domain?page=0&size=20&domainName=%s", c.baseUrl, domainName)
+
+	// log.Printf("request url: %s", url)
 	req, err := c.createRequest("GET", url, nil)
 	if err != nil {
 		return 0, err
@@ -45,6 +48,8 @@ func (c *NcpDnsClient) GetDomainId(domainName string) (int, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
+
+	// log.Printf("resp.StatusCode: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("failed to get domain id: %s", resp.Status)
@@ -59,6 +64,8 @@ func (c *NcpDnsClient) GetDomainId(domainName string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	// log.Printf("result: %v", result)
 
 	if len(result.Content) == 0 {
 		return 0, fmt.Errorf("no domain found")
