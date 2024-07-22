@@ -1,4 +1,4 @@
-FROM golang:1.22.0 AS build
+FROM golang:1.22.0-alpine AS build_deps
 WORKDIR /workspace
 RUN apk add --no-cache git
 COPY go.mod .
