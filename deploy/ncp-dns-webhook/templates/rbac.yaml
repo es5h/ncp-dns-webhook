@@ -9,9 +9,7 @@ metadata:
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 ---
-# Grant the webhook permission to read the ConfigMap containing the Kubernetes
-# apiserver's requestheader-ca-certificate.
-# This ConfigMap is automatically created by the Kubernetes apiserver.
+# RoleBinding for reading ConfigMap in kube-system namespace
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -32,8 +30,7 @@ subjects:
     name: {{ include "ncp-dns-webhook.fullname" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# apiserver gets the auth-delegator role to delegate auth decisions to
-# the core apiserver
+# ClusterRoleBinding for auth-delegator
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -53,7 +50,7 @@ subjects:
     name: {{ include "ncp-dns-webhook.fullname" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# Grant cert-manager permission to validate using our apiserver
+# ClusterRole for domain-solver
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -70,7 +67,11 @@ rules:
       - '*'
     verbs:
       - 'create'
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
 ---
+# ClusterRoleBinding for domain-solver
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -87,5 +88,31 @@ roleRef:
 subjects:
   - apiGroup: ""
     kind: ServiceAccount
-    name: {{ .Values.certManager.serviceAccountName }}
-    namespace: {{ .Values.certManager.namespace }}
+    name: {{ include "ncp-dns-webhook.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role for reading secrets in ingress-basic namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ncp-dns-webhook.fullname" . }}-secret-reader
+  namespace: {{ .Values.certManager.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+# RoleBinding for the Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ncp-dns-webhook.fullname" . }}-secret-reader-binding
+  namespace: {{ .Values.certManager.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ncp-dns-webhook.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "ncp-dns-webhook.fullname" . }}-secret-reader
