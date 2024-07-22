@@ -1,0 +1,13 @@
+apiVersion: v1
+entries:
+  ncp-dns-webhook:
+  - apiVersion: v1
+    created: "2024-07-23T04:45:17.24306103+09:00"
+    description: A Helm chart for Kubernetes
+    digest: d33827b72f2002586cfd5580aa4477c8901f929331433ac68c5b5b78e98dc0bd
+    name: ncp-dns-webhook
+    type: application
+    urls:
+    - https://es5h.github.io/ncp-dns-webhook/ncp-dns-webhook-0.1.0.tgz
+    version: 0.1.0
+generated: "2024-07-23T04:45:17.240001416+09:00"
