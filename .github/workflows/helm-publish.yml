@@ -1,9 +1,13 @@
-name: Publish Public Helm Chart
+name: Build and Publish
 
 on:
   push:
-    branches: [ main, master, refactor/code-styles]
+    branches: [ main, master, refactor/code-styles ]
     paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile'
       - 'deploy/ncp-dns-webhook/**'
       - '.github/workflows/helm-publish.yml'
   release:
@@ -12,10 +16,11 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_NAME: ncp-dns-webhook
   CHART_PATH: deploy/ncp-dns-webhook
 
 jobs:
-  publish:
+  build-and-publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,13 +30,62 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
           version: 3.14.0
 
-      - name: Login to GitHub Container Registry
+      - name: Login to Helm Registry
         run: echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+
+      - name: Update values.yaml with built image
+        run: |
+          cd ${{ env.CHART_PATH }}
+          # Extract the main image tag (latest or version)
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -E "(latest|[0-9]+\.[0-9]+\.[0-9]+)" | head -1 | cut -d':' -f2)
+          if [ -z "$IMAGE_TAG" ]; then
+            IMAGE_TAG="latest"
+          fi
+          
+          # Update image repository and tag in values.yaml
+          sed -i "s|repository:.*|repository: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}|" values.yaml
+          sed -i "s|tag:.*|tag: \"${IMAGE_TAG}\"|" values.yaml
+          
+          echo "Updated values.yaml:"
+          grep -A2 "image:" values.yaml
 
       - name: Extract chart metadata
         id: chart
@@ -44,7 +98,7 @@ jobs:
           echo "name=${NAME}" >> $GITHUB_OUTPUT
           echo "app-version=${APP_VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Package and push chart
+      - name: Package and push Helm chart
         run: |
           cd ${{ env.CHART_PATH }}
           helm package .
@@ -52,26 +106,44 @@ jobs:
 
       - name: Set package to public
         run: |
-          # 패키지를 public으로 설정
+          # Docker 이미지를 public으로 설정
+          curl -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/user/packages/container/${{ env.IMAGE_NAME }} \
+            -d '{"visibility":"public"}' || \
+          curl -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/orgs/${{ github.repository_owner }}/packages/container/${{ env.IMAGE_NAME }} \
+            -d '{"visibility":"public"}'
+          
+          # Helm 차트를 public으로 설정
           curl -X PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/user/packages/container/charts%2F${{ steps.chart.outputs.name }} \
+            -d '{"visibility":"public"}' || \
+          curl -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/orgs/${{ github.repository_owner }}/packages/container/charts%2F${{ steps.chart.outputs.name }} \
             -d '{"visibility":"public"}'
 
       - name: Generate installation instructions
         run: |
-          echo "🎉 Helm chart published successfully!"
+          echo "🎉 Docker image and Helm chart published successfully!"
           echo ""
-          echo "📦 Package: ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }}"
-          echo "🏷️  Version: ${{ steps.chart.outputs.version }}"
+          echo "🐳 Docker image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          echo "📦 Helm chart: ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }}"
+          echo "🏷️  Chart version: ${{ steps.chart.outputs.version }}"
           echo ""
           echo "📋 Installation commands:"
-          echo "# Add repository (optional, for easier access)"
-          echo "helm repo add ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
-          echo ""
-          echo "# Install chart"
+          echo "# Install with Helm"
           echo "helm install ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }} --version ${{ steps.chart.outputs.version }}"
           echo ""
           echo "# Or with custom values"
@@ -79,3 +151,6 @@ jobs:
           echo "  --version ${{ steps.chart.outputs.version }} \\"
           echo "  --set secretName=my-ncp-secret \\"
           echo "  --set groupName=acme.mydomain.com"
+          echo ""
+          echo "🔧 Available Docker tags:"
+          echo "${{ steps.meta.outputs.tags }}"
