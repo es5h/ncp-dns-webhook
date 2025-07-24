@@ -1,0 +1,74 @@
+name: Publish Helm Chart to GHCR
+
+on:
+  push:
+    branches: [ main, master, refactor/code-styles ]
+    paths:
+      - 'deploy/ncp-dns-webhook/**'
+      - '.github/workflows/helm-publish.yml'
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  HELM_CHART_PATH: deploy/ncp-dns-webhook
+
+jobs:
+  publish-helm-chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.14.0'
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          cd ${{ env.HELM_CHART_PATH }}
+          CHART_VERSION=$(grep '^version:' Chart.yaml | awk '{print $2}')
+          CHART_NAME=$(grep '^name:' Chart.yaml | awk '{print $2}')
+          echo "chart-version=${CHART_VERSION}" >> $GITHUB_OUTPUT
+          echo "chart-name=${CHART_NAME}" >> $GITHUB_OUTPUT
+          echo "Chart: ${CHART_NAME}, Version: ${CHART_VERSION}"
+
+      - name: Package Helm chart
+        run: |
+          cd ${{ env.HELM_CHART_PATH }}
+          helm dependency update
+          helm package . --destination /tmp
+
+      - name: Push Helm chart to GHCR
+        run: |
+          helm push /tmp/${{ steps.meta.outputs.chart-name }}-${{ steps.meta.outputs.chart-version }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts
+
+      - name: Verify chart push
+        run: |
+          echo "✅ Helm chart successfully pushed to:"
+          echo "Registry: ${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/${{ steps.meta.outputs.chart-name }}"
+          echo "Version: ${{ steps.meta.outputs.chart-version }}"
+          echo ""
+          echo "📋 Installation command:"
+          echo "helm install my-ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/${{ steps.meta.outputs.chart-name }} --version ${{ steps.meta.outputs.chart-version }}"
