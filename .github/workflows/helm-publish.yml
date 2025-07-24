@@ -1,8 +1,8 @@
-name: Publish Helm Chart to GHCR
+name: Publish Public Helm Chart
 
 on:
   push:
-    branches: [ main, master, refactor/code-styles ]
+    branches: [ main, master, refactor/code-styles]
     paths:
       - 'deploy/ncp-dns-webhook/**'
       - '.github/workflows/helm-publish.yml'
@@ -12,63 +12,70 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  HELM_CHART_PATH: deploy/ncp-dns-webhook
+  CHART_PATH: deploy/ncp-dns-webhook
 
 jobs:
-  publish-helm-chart:
+  publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Configure Git
-        run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-
-      - name: Install Helm
+      - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: '3.14.0'
+          version: 3.14.0
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Login to GitHub Container Registry
+        run: echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
 
-      - name: Extract metadata
-        id: meta
+      - name: Extract chart metadata
+        id: chart
         run: |
-          cd ${{ env.HELM_CHART_PATH }}
-          CHART_VERSION=$(grep '^version:' Chart.yaml | awk '{print $2}')
-          CHART_NAME=$(grep '^name:' Chart.yaml | awk '{print $2}')
-          echo "chart-version=${CHART_VERSION}" >> $GITHUB_OUTPUT
-          echo "chart-name=${CHART_NAME}" >> $GITHUB_OUTPUT
-          echo "Chart: ${CHART_NAME}, Version: ${CHART_VERSION}"
+          cd ${{ env.CHART_PATH }}
+          VERSION=$(yq eval '.version' Chart.yaml)
+          NAME=$(yq eval '.name' Chart.yaml)
+          APP_VERSION=$(yq eval '.appVersion' Chart.yaml)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "name=${NAME}" >> $GITHUB_OUTPUT
+          echo "app-version=${APP_VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Package Helm chart
+      - name: Package and push chart
         run: |
-          cd ${{ env.HELM_CHART_PATH }}
-          helm dependency update
-          helm package . --destination /tmp
+          cd ${{ env.CHART_PATH }}
+          helm package .
+          helm push ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
 
-      - name: Push Helm chart to GHCR
+      - name: Set package to public
         run: |
-          helm push /tmp/${{ steps.meta.outputs.chart-name }}-${{ steps.meta.outputs.chart-version }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts
+          # 패키지를 public으로 설정
+          curl -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/user/packages/container/charts%2F${{ steps.chart.outputs.name }} \
+            -d '{"visibility":"public"}'
 
-      - name: Verify chart push
+      - name: Generate installation instructions
         run: |
-          echo "✅ Helm chart successfully pushed to:"
-          echo "Registry: ${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/${{ steps.meta.outputs.chart-name }}"
-          echo "Version: ${{ steps.meta.outputs.chart-version }}"
+          echo "🎉 Helm chart published successfully!"
           echo ""
-          echo "📋 Installation command:"
-          echo "helm install my-ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/${{ steps.meta.outputs.chart-name }} --version ${{ steps.meta.outputs.chart-version }}"
+          echo "📦 Package: ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }}"
+          echo "🏷️  Version: ${{ steps.chart.outputs.version }}"
+          echo ""
+          echo "📋 Installation commands:"
+          echo "# Add repository (optional, for easier access)"
+          echo "helm repo add ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+          echo ""
+          echo "# Install chart"
+          echo "helm install ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }} --version ${{ steps.chart.outputs.version }}"
+          echo ""
+          echo "# Or with custom values"
+          echo "helm install ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }} \\"
+          echo "  --version ${{ steps.chart.outputs.version }} \\"
+          echo "  --set secretName=my-ncp-secret \\"
+          echo "  --set groupName=acme.mydomain.com"
