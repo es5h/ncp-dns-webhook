@@ -3,8 +3,8 @@ name: ncp-dns-webhook
 description: 네이버 클라우드 DNS API를 cert-manager DNS01 solver로 연동하는 Kubernetes Webhook Helm 차트입니다. ACME Challenge 처리를 위해 certgen 의존성이 있습니다.
 type: application
 
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.1.2
+appVersion: "0.1.2"
 keywords:
   - cert-manager
   - webhook

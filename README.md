@@ -22,7 +22,7 @@ kubectl create secret generic ncp-dns-api-secret \
 
 ```bash
 helm install ncp-dns-webhook oci://ghcr.io/es5h/charts/ncp-dns-webhook \
-  --version 0.2.0 \
+  --version 0.1.2 \
   --namespace cert-manager \
   --set secretName=ncp-dns-api-secret \
   --set groupName=acme.yourdomain.com
