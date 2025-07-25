@@ -2,7 +2,7 @@ name: Build and Publish
 
 on:
   push:
-    branches: [ main, master, refactor/code-styles ]
+    branches: [ main, master ]
     paths:
       - '**/*.go'
       - 'go.mod'
@@ -144,7 +144,6 @@ jobs:
           echo "# Or with custom values"
           echo "helm install ncp-dns-webhook oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }} \\"
           echo "  --version ${{ steps.chart.outputs.version }} \\"
-          echo "  --set secretName=my-ncp-secret \\"
           echo "  --set groupName=acme.mydomain.com"
           echo ""
           echo "🔧 Available Docker tags:"

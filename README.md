@@ -1,10 +1,10 @@
 # NCP DNS Webhook for cert-manager
 
-네이버 클라우드 플랫폼(NCP) DNS API를 cert-manager와 연동하여 DNS-01 challenge를 통한 Let's Encrypt SSL 인증서 자동 발급을 지원하는 Kubernetes webhook입니다.
+네이버 클라우드 플랫폼(NCP) DNS API를 cert-manager와 연동하여 DNS-01 challenge를 통한 Let's Encrypt 등의 SSL 인증서 자동 발급을 지원하는 Kubernetes webhook입니다.
 
 ## 사전 요구사항
 - 네이버 클라우드 플랫폼 계정 및 DNS 서비스 이용
-- NCP API Access Key 및 Secret Key (DNS API 권한이 있는 계정)
+- NCP API Access Key 및 Secret Key (DNS API 권한이 있는 subaccount 로 최소 권한 권장)
 ## 설치
 
 Certmanager Namespace가 `cert-manager`라고 가정합니다. 다른 네임스페이스를 사용하려면 아래 명령어에서 `-n cert-manager` 부분을 변경하세요.
@@ -24,7 +24,6 @@ kubectl create secret generic ncp-dns-api-secret \
 helm install ncp-dns-webhook oci://ghcr.io/es5h/charts/ncp-dns-webhook \
   --version 0.1.2 \
   --namespace cert-manager \
-  --set secretName=ncp-dns-api-secret \
   --set groupName=acme.yourdomain.com
 ```
 
@@ -45,7 +44,7 @@ spec:
     - dns01:
         webhook:
           groupName: acme.yourdomain.com
-          solverName: ncp-dns
+          solverName: ncp-dns-solver
           config:
             ncpAccessKeySecretRef:
               name: ncp-dns-api-secret
