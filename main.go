@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
 	"log"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
 	"github.com/pkg/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -21,138 +21,165 @@ import (
 	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
-var GroupName = os.Getenv("GROUP_NAME")
+const (
+	defaultTimeout = 30 * time.Second
+	solverName     = "ncp-dns-solver"
+)
+
+var groupName = os.Getenv("GROUP_NAME")
 
 func main() {
-	if GroupName == "" {
-		panic("GROUP_NAME must be specified")
+	if groupName == "" {
+		log.Fatal("GROUP_NAME environment variable must be specified")
 	}
 
-	cmd.RunWebhookServer(GroupName,
-		&ncpDNSProviderSolver{},
-	)
+	solver := &NCPDNSProviderSolver{}
+	cmd.RunWebhookServer(groupName, solver)
 }
 
-type ncpDNSProviderSolver struct {
-	client       *kubernetes.Clientset
-	ncpDNSClient *ncpdns.NcpDnsClient
+// NCPDNSProviderSolver implements the cert-manager webhook solver interface
+type NCPDNSProviderSolver struct {
+	kubeClient kubernetes.Interface
 }
 
-type ncpDNSProviderConfig struct {
-	AccessToken cmmetav1.SecretKeySelector `json:"accessTokenSecretRef"`
-	SecretToken cmmetav1.SecretKeySelector `json:"secretKeySecretRef"`
-	BaseURL     string                     `json:"baseUrl"`
+// Config represents the configuration for NCP DNS provider
+type Config struct {
+	AccessTokenRef cmmetav1.SecretKeySelector `json:"accessTokenSecretRef"`
+	SecretKeyRef   cmmetav1.SecretKeySelector `json:"secretKeySecretRef"`
+	BaseURL        string                     `json:"baseUrl"`
+	Timeout        *metav1.Duration           `json:"timeout,omitempty"`
 }
 
-func (c *ncpDNSProviderSolver) Name() string {
-	return "ncp-dns-solver"
+// Name returns the solver name
+func (s *NCPDNSProviderSolver) Name() string {
+	return solverName
 }
 
-func (c *ncpDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
-	cfg, err := loadConfig(ch.Config)
+// Present creates a TXT record for ACME challenge
+func (s *NCPDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
+	ctx := context.Background()
+
+	cfg, err := s.loadConfig(ch.Config)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to load configuration")
 	}
 
-	accessToken, err := c.loadSecretData(cfg.AccessToken, ch.ResourceNamespace)
+	client, err := s.createDNSClient(ctx, cfg, ch.ResourceNamespace)
 	if err != nil {
-		return err
-	}
-	secretKey, err := c.loadSecretData(cfg.SecretToken, ch.ResourceNamespace)
-	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to create DNS client")
 	}
 
-	client := ncpdns.NewNcpDnsClient(ncpdns.NcpDnsOptions{
-		BaseUrl:   cfg.BaseURL,
-		AccessKey: string(accessToken),
-		SecretKey: string(secretKey),
-	})
-	c.ncpDNSClient = client
+	cleanZone := strings.TrimSuffix(ch.ResolvedZone, ".")
 
-	log.Printf("Attempting to get domain ID for zone: %s", ch.ResolvedZone)
-
-	// Remove trailing dot from resolved zone
-	cleanResolvedZone := strings.TrimSuffix(ch.ResolvedZone, ".")
-	domainID, err := c.ncpDNSClient.GetDomainId(cleanResolvedZone)
-
+	log.Printf("Getting domain ID for zone: %s", cleanZone)
+	domainID, err := client.GetDomainID(ctx, cleanZone)
 	if err != nil {
-		return fmt.Errorf("ncpdns: error getting domain ID: %v", err)
+		return errors.Wrapf(err, "failed to get domain ID for zone %s", cleanZone)
 	}
 
-	log.Printf("Domain ID for zone %s is %d", ch.ResolvedZone, domainID)
-	err = c.ncpDNSClient.CreateTxtRecord(domainID, c.extractRecordName(ch.ResolvedFQDN, cleanResolvedZone), ch.Key)
-	if err != nil {
-		return fmt.Errorf("ncpdns: error creating TXT record: %v", err)
+	recordName := s.extractRecordName(ch.ResolvedFQDN, cleanZone)
+	log.Printf("Creating TXT record: %s with value: %s", recordName, ch.Key)
+
+	if err := client.CreateTxtRecord(ctx, domainID, recordName, ch.Key); err != nil {
+		return errors.Wrapf(err, "failed to create TXT record %s", recordName)
 	}
+
+	log.Printf("Successfully created TXT record for domain ID %d", domainID)
 	return nil
 }
 
-func (c *ncpDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
-	cfg, err := loadConfig(ch.Config)
+// CleanUp removes the TXT record for ACME challenge
+func (s *NCPDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
+	ctx := context.Background()
+
+	cfg, err := s.loadConfig(ch.Config)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to load configuration")
 	}
 
-	accessToken, err := c.loadSecretData(cfg.AccessToken, ch.ResourceNamespace)
+	client, err := s.createDNSClient(ctx, cfg, ch.ResourceNamespace)
 	if err != nil {
-		return err
-	}
-	secretKey, err := c.loadSecretData(cfg.SecretToken, ch.ResourceNamespace)
-	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to create DNS client")
 	}
 
-	client := ncpdns.NewNcpDnsClient(ncpdns.NcpDnsOptions{
-		BaseUrl:   cfg.BaseURL,
-		AccessKey: string(accessToken),
-		SecretKey: string(secretKey),
-	})
-	c.ncpDNSClient = client
+	cleanZone := strings.TrimSuffix(ch.ResolvedZone, ".")
 
-	// Remove trailing dot from resolved zone
-	cleanResolvedZone := strings.TrimSuffix(ch.ResolvedZone, ".")
-	domainID, err := c.ncpDNSClient.GetDomainId(cleanResolvedZone)
+	domainID, err := client.GetDomainID(ctx, cleanZone)
 	if err != nil {
-		return fmt.Errorf("ncpdns: error getting domain ID: %v", err)
+		return errors.Wrapf(err, "failed to get domain ID for zone %s", cleanZone)
 	}
 
-	recordID, err := c.ncpDNSClient.GetTxtRecordId(domainID, c.extractRecordName(ch.ResolvedFQDN, cleanResolvedZone))
+	recordName := s.extractRecordName(ch.ResolvedFQDN, cleanZone)
+	recordID, err := client.GetTxtRecordID(ctx, domainID, recordName)
 	if err != nil {
-		return fmt.Errorf("ncpdns: error getting TXT record ID: %v", err)
+		return errors.Wrapf(err, "failed to get TXT record ID for %s", recordName)
 	}
 
-	err = c.ncpDNSClient.DeleteTxtRecord(domainID, []int{recordID})
-	if err != nil {
-		return fmt.Errorf("ncpdns: error deleting TXT record: %v", err)
+	log.Printf("Deleting TXT record: %s (ID: %d)", recordName, recordID)
+	if err := client.DeleteTxtRecord(ctx, domainID, []int{recordID}); err != nil {
+		return errors.Wrapf(err, "failed to delete TXT record %s", recordName)
 	}
+
+	log.Printf("Successfully deleted TXT record for domain ID %d", domainID)
 	return nil
 }
 
-func (c *ncpDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
-	cl, err := kubernetes.NewForConfig(kubeClientConfig)
+// Initialize sets up the Kubernetes client
+func (s *NCPDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, _ <-chan struct{}) error {
+	client, err := kubernetes.NewForConfig(kubeClientConfig)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to create Kubernetes client")
 	}
 
-	c.client = cl
-
+	s.kubeClient = client
 	return nil
 }
 
-func loadConfig(cfgJSON *extapi.JSON) (ncpDNSProviderConfig, error) {
-	cfg := ncpDNSProviderConfig{}
+func (s *NCPDNSProviderSolver) loadConfig(cfgJSON *extapi.JSON) (*Config, error) {
+	cfg := &Config{}
 	if cfgJSON == nil {
 		return cfg, nil
 	}
-	if err := json.Unmarshal(cfgJSON.Raw, &cfg); err != nil {
-		return cfg, fmt.Errorf("error decoding solver config: %v", err)
+
+	if err := json.Unmarshal(cfgJSON.Raw, cfg); err != nil {
+		return nil, errors.Wrap(err, "failed to decode solver configuration")
+	}
+
+	// Validate required fields
+	if cfg.BaseURL == "" {
+		return nil, errors.New("baseUrl is required in configuration")
 	}
 
 	return cfg, nil
 }
 
-func (c *ncpDNSProviderSolver) extractRecordName(fqdn, domain string) string {
+func (s *NCPDNSProviderSolver) createDNSClient(ctx context.Context, cfg *Config, namespace string) (ncpdns.DNSClient, error) {
+	accessToken, err := s.loadSecretData(ctx, cfg.AccessTokenRef, namespace)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load access token from secret")
+	}
+
+	secretKey, err := s.loadSecretData(ctx, cfg.SecretKeyRef, namespace)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load secret key from secret")
+	}
+
+	timeout := defaultTimeout
+	if cfg.Timeout != nil {
+		timeout = cfg.Timeout.Duration
+	}
+
+	opts := ncpdns.Options{
+		BaseURL:   cfg.BaseURL,
+		AccessKey: string(accessToken),
+		SecretKey: string(secretKey),
+		Timeout:   timeout,
+	}
+
+	return ncpdns.NewClient(opts), nil
+}
+
+func (s *NCPDNSProviderSolver) extractRecordName(fqdn, domain string) string {
 	name := util.UnFqdn(fqdn)
 	if idx := strings.Index(name, "."+domain); idx != -1 {
 		return name[:idx]
@@ -160,15 +187,20 @@ func (c *ncpDNSProviderSolver) extractRecordName(fqdn, domain string) string {
 	return name
 }
 
-func (c *ncpDNSProviderSolver) loadSecretData(selector cmmetav1.SecretKeySelector, ns string) ([]byte, error) {
-	secret, err := c.client.CoreV1().Secrets(ns).Get(context.TODO(), selector.Name, v1.GetOptions{})
+func (s *NCPDNSProviderSolver) loadSecretData(ctx context.Context, selector cmmetav1.SecretKeySelector, namespace string) ([]byte, error) {
+	secret, err := s.kubeClient.CoreV1().Secrets(namespace).Get(ctx, selector.Name, metav1.GetOptions{})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to load secret %q", ns+"/"+selector.Name)
+		return nil, errors.Wrapf(err, "failed to get secret %s/%s", namespace, selector.Name)
 	}
 
-	if data, ok := secret.Data[selector.Key]; ok {
-		return data, nil
+	data, exists := secret.Data[selector.Key]
+	if !exists {
+		return nil, errors.Errorf("key %q not found in secret %s/%s", selector.Key, namespace, selector.Name)
 	}
 
-	return nil, errors.Errorf("no key %q in secret %q", selector.Key, ns+"/"+selector.Name)
+	if len(data) == 0 {
+		return nil, errors.Errorf("key %q in secret %s/%s is empty", selector.Key, namespace, selector.Name)
+	}
+
+	return data, nil
 }

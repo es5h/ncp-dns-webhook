@@ -3,10 +3,7 @@ kind: APIService
 metadata:
   name: v1alpha1.{{ .Values.groupName }}
   labels:
-    app: {{ include "ncp-dns-webhook.name" . }}
-    chart: {{ include "ncp-dns-webhook.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "ncp-dns-webhook.labels" . | nindent 4 }}
   annotations:
     cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/{{ include "ncp-dns-webhook.servingCertificate" . }}"
 spec:

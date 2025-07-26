@@ -46,3 +46,18 @@ Create chart name and version as used by the chart label.
 {{- define "ncp-dns-webhook.servingCertificate" -}}
 {{ printf "%s-webhook-tls" (include "ncp-dns-webhook.fullname" .) }}
 {{- end -}}
+
+{{- define "ncp-dns-webhook.labels" -}}
+app.kubernetes.io/name: {{ include "ncp-dns-webhook.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/version: {{ .Chart.AppVersion }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: webhook
+helm.sh/chart: {{ include "ncp-dns-webhook.chart" . }}
+{{- end }}
+
+{{- define "ncp-dns-webhook.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "ncp-dns-webhook.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: webhook
+{{- end }}

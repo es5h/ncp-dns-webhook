@@ -1,6 +1,17 @@
-apiVersion: v1
+apiVersion: v2
 name: ncp-dns-webhook
-description: A Helm chart for Kubernetes
+description: 네이버 클라우드 DNS API를 cert-manager DNS01 solver로 연동하는 Kubernetes Webhook Helm 차트입니다.
 type: application
 
-version: 0.1.1
+version: 0.1.2
+appVersion: "0.1.2"
+keywords:
+  - cert-manager
+  - webhook
+  - ncp
+  - dns
+home: https://github.com/es5h/ncp-dns-webhook
+sources:
+  - https://github.com/es5h/ncp-dns-webhook
+maintainers:
+  - name: es5h

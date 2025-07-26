@@ -4,10 +4,7 @@ metadata:
   name: {{ include "ncp-dns-webhook.fullname" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    app: {{ include "ncp-dns-webhook.name" . }}
-    chart: {{ include "ncp-dns-webhook.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "ncp-dns-webhook.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -16,5 +13,4 @@ spec:
       protocol: TCP
       name: https
   selector:
-    app: {{ include "ncp-dns-webhook.name" . }}
-    release: {{ .Release.Name }}
+    {{- include "ncp-dns-webhook.selectorLabels" . | nindent 4 }}
